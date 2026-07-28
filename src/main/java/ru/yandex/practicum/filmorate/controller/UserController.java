@@ -1,5 +1,6 @@
 package ru.yandex.practicum.filmorate.controller;
 
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import ru.yandex.practicum.filmorate.exception.DuplicateUserException;
@@ -7,16 +8,15 @@ import ru.yandex.practicum.filmorate.exception.NotFoundException;
 import ru.yandex.practicum.filmorate.exception.ValidationException;
 import ru.yandex.practicum.filmorate.model.User;
 
-import java.time.LocalDate;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
+
 
 @RestController
 @RequestMapping("/users")
 @Slf4j
 public class UserController {
     private final Map<Long, User> users = new HashMap<>();
+    private final Set<String> userEmails = new HashSet<>();
 
     @GetMapping
     public Collection<User> findAll() {
@@ -25,9 +25,14 @@ public class UserController {
     }
 
     @PostMapping
-    public User add(@RequestBody User user) {
+    public User add(@Valid @RequestBody User user) {
         log.info("Получен запрос POST /users");
         validateUser(user);
+        String nomralizedEmail = user.getEmail().toLowerCase();
+        if (userEmails.contains(nomralizedEmail)) {
+            log.warn("Обнаружен пользователь с уже существующим email{}", user.getEmail());
+            throw new DuplicateUserException("Пользователь с таким email уже существует.");
+        }
         user.setId(getNextId());
         users.put(user.getId(), user);
         log.info("Пользователь с id={} успешно добавлен", user.getId());
@@ -35,7 +40,7 @@ public class UserController {
     }
 
     @PutMapping
-    public User update(@RequestBody User newUser) {
+    public User update(@Valid @RequestBody User newUser) {
         log.info("Получен запрос PUT /users");
 
         if (newUser.getId() == null) {
@@ -50,14 +55,23 @@ public class UserController {
 
         validateUser(newUser);
 
-        for (User userFromList : users.values()) {
-            if (userFromList.getEmail().equalsIgnoreCase(newUser.getEmail())
-                    && !userFromList.equals(newUser)) {
-                log.warn("Обнаружен пользователь с уже существующим email {}", newUser.getEmail());
-                throw new DuplicateUserException("Пользователь c таким email уже существует.");
-            }
+        User oldUser = users.get(newUser.getId());
+
+        String oldEmail = oldUser.getEmail().toLowerCase();
+        String newEmail = newUser.getEmail().toLowerCase();
+
+        userEmails.remove(oldEmail);
+
+        if (userEmails.contains(newEmail)) {
+            userEmails.add(oldEmail);
+            log.warn("Обнаружен пользователь с уже существующим email {}", newUser.getEmail());
+            throw new DuplicateUserException("Пользователь c таким email уже существует.");
         }
+
+        userEmails.add(newEmail);
+
         users.put(newUser.getId(), newUser);
+
         log.info("Данные пользователя с id={} успешно обновлены", newUser.getId());
         return newUser;
 
@@ -65,17 +79,8 @@ public class UserController {
 
     private void validateUser(User user) {
         log.info("Запуск валидации");
-        if (user.getEmail() == null || user.getEmail().isBlank()) {
-            log.warn("Валидация не пройдена: email пустой или null");
-            throw new ValidationException("Почта не может быть пустой.");
-        }
 
-        if (!user.getEmail().contains("@")) {
-            log.warn("Валидация не пройдена: email {} не содержит @", user.getEmail());
-            throw new ValidationException("Почта должна содержать символ @.");
-        }
-
-        if (user.getLogin() == null || user.getLogin().isBlank() || user.getLogin().contains(" ")) {
+        if (user.getLogin().contains(" ")) {
             log.warn("Валидация не пройдена: Логин не должен быть пустым и содержать пробелы");
             throw new ValidationException("Логин не должен быть пустым и содержать пробелы.");
         }
@@ -84,10 +89,7 @@ public class UserController {
             log.info("У пользователя отсутствует имя, оно заменено логином {}", user.getLogin());
             user.setName(user.getLogin());
         }
-        if (user.getBirthday() == null || user.getBirthday().isAfter(LocalDate.now())) {
-            log.warn("Валидация не пройдена: дата рождения не корректна");
-            throw new ValidationException("Дата рождения не может быть в будущем.");
-        }
+
         log.info("Валидация пройдена успешно!");
 
     }
